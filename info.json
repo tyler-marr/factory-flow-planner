@@ -3,6 +3,7 @@
   "version": "0.11.0",
   "title": "Factory Flow Planner",
   "author": "sgt_munter",
+  "homepage": "https://github.com/tyler-marr/factory-flow-planner",
   "factorio_version": "2.1",
   "description": "A flowchart production planner inside the game. Put recipes on a board as cards, link them with real belts and pipes, set a target, and it works out machines, rates, power and what's left over. Reads every recipe and machine from the game, so modded ones work. Plans are shared with your team.",
   "dependencies": [
