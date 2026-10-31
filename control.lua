@@ -65,10 +65,47 @@ local function refresh_player(player)
   gui.inspector_update(player)
 end
 
+-- How many of a team's plans stay loaded (drawn, with their belts) at once:
+-- the most recently opened ones. Others are cleared off the board and redrawn
+-- when next opened.
+local KEEP_LOADED = 3
+
+--- Wakes plans someone is viewing, puts the rest of the team's recent plans to
+--- sleep (belts paused), and unloads plans beyond the KEEP_LOADED most recent.
+local function balance_plans(force_index)
+  local list = {}
+  for _, plan in pairs(storage.plans) do
+    if plan.force == force_index then list[#list + 1] = plan end
+  end
+  table.sort(list, function(a, b)
+    local ta, tb = a.last_viewed or -1, b.last_viewed or -1
+    if ta ~= tb then return ta > tb end
+    return a.id < b.id
+  end)
+  for i, plan in ipairs(list) do
+    local viewed = #viewers(plan) > 0
+    if viewed then
+      board.set_sleeping(plan.id, false)
+    elseif i <= KEEP_LOADED then
+      board.set_sleeping(plan.id, true)
+    elseif storage.render[plan.id] then
+      board.unload(plan.id)
+    end
+  end
+end
+
 local function changed(plan)
   board.resolve(plan)
+  local watched = viewers(plan)
+  if #watched == 0 then
+    -- Nobody is looking: redraw when someone opens it.
+    storage.stale = storage.stale or {}
+    storage.stale[plan.id] = true
+    gui.plans_update_force(plan.force)
+    return
+  end
   board.draw(plan)
-  for _, p in ipairs(viewers(plan)) do
+  for _, p in ipairs(watched) do
     local s = board.session(p.index)
     if s.selected and not plan_lib.card(plan, s.selected) then s.selected = nil end
     if s.moving and not plan_lib.card(plan, s.moving) then s.moving = nil end
@@ -92,7 +129,13 @@ end
 local function open_plan(player, plan)
   gui.plans_close(player)
   gui.string_close(player)
+  plan.last_viewed = game.tick
+  if storage.stale and storage.stale[plan.id] and storage.render[plan.id] then
+    board.draw(plan) -- changed while nobody was looking
+  end
+  if storage.stale then storage.stale[plan.id] = nil end
   board.enter(player, plan)
+  balance_plans(plan.force)
   refresh_player(player)
   gui.plans_update_force(plan.force)
 end
@@ -101,7 +144,11 @@ local function leave(player)
   local plan = board.plan_of(player)
   gui.close_all(player)
   board.leave(player)
-  if plan then gui.plans_update_force(plan.force) end
+  if plan then
+    plan.last_viewed = game.tick
+    balance_plans(plan.force)
+    gui.plans_update_force(plan.force)
+  end
 end
 
 local function delete_plan(plan)
@@ -111,6 +158,7 @@ local function delete_plan(plan)
   end
   board.destroy_plan_drawing(plan.id)
   storage.plans[plan.id] = nil
+  if storage.stale then storage.stale[plan.id] = nil end
   gui.plans_update_force(plan.force)
 end
 
@@ -998,9 +1046,15 @@ script.on_configuration_changed(function()
     gui.plans_close(p)
     gui.string_close(p)
   end
-  -- Belts and pipes are rebuilt from scratch: an older version may have laid
-  -- them differently (or switched them off).
-  storage.link_sig = {}
+  -- Belts, pipes, drawings and routes are rebuilt from scratch: an older
+  -- version may have laid them differently, and the mod list may have changed
+  -- what belts exist. Plans nobody is viewing are unloaded until next opened.
+  for _, ents in pairs(storage.link_ents or {}) do
+    for _, e in ipairs(ents) do if e.valid then e.destroy() end end
+  end
+  storage.link_ents, storage.link_sig, storage.link_runs = nil, nil, nil
+  for pid in pairs(storage.plans) do board.unload(pid) end
+  storage.route_cache = {}
   -- Recipes or machines may have changed with the mod list: re-solve and redraw
   -- everything. Cards go onto whole tiles so belts and pipes line up with ports.
   for _, plan in pairs(storage.plans) do
@@ -1008,7 +1062,7 @@ script.on_configuration_changed(function()
       c.x, c.y = layout.snap(c.x), layout.snap(c.y)
     end
     board.resolve(plan)
-    board.draw(plan)
+    if #viewers(plan) > 0 then board.draw(plan) end
   end
   for _, p in pairs(game.players) do
     if board.on_board(p) then
@@ -1016,6 +1070,7 @@ script.on_configuration_changed(function()
       refresh_player(p)
     end
   end
+  for _, force in pairs(game.forces) do balance_plans(force.index) end
 end)
 
 -- Research changes productivity bonuses.

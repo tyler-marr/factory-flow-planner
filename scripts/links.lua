@@ -31,7 +31,10 @@ end
 --- @param kit table
 --- @return table laid: list of { wire, fluid, path, merged_into, kind = belt|pipe entry, mult, start_tile }
 --- @return table failed: list of wires that found no route (drawn as lines instead)
-function links.lay(plan, spec_of, flows, kit)
+--- @param prev table|nil the previous result ({ laid = ... }): links whose ends,
+---   item and belt tier are unchanged, and whose tiles are still clear, keep their
+---   route; only the others are routed again (around the kept ones).
+function links.lay(plan, spec_of, flows, kit, prev)
   local geo, blocked = {}, {}
   local minx, miny, maxx, maxy = math.huge, math.huge, -math.huge, -math.huge
   for _, c in ipairs(plan.cards) do
@@ -93,6 +96,115 @@ function links.lay(plan, spec_of, flows, kit)
   local from_laid, to_laid = {}, {} -- group -> laid entries (belts only), for splitters
   local split_used = {}              -- trunk tiles that already hold a splitter
 
+  -- The first link out of an output and into an input is its trunk, sized for
+  -- everything along it; the others carry their own rate.
+  local first_from, first_to = {}, {}
+  for _, w in ipairs(wires) do
+    local fg, tg = w.from .. "|" .. w.res, w.to .. "|" .. w.res
+    first_from[fg] = first_from[fg] or w.id
+    first_to[tg] = first_to[tg] or w.id
+  end
+  local function tier_rate(w)
+    local fg, tg = w.from .. "|" .. w.res, w.to .. "|" .. w.res
+    if first_from[fg] == w.id and first_to[tg] == w.id then
+      return math.max(from_sum[fg] or 0, to_sum[tg] or 0)
+    end
+    return flows[w.id] or 0
+  end
+
+  --- What a link's route depends on besides its surroundings.
+  local function wire_key(w)
+    local A, B = geo[w.from], geo[w.to]
+    if not (A and B) then return nil end
+    local ax, ay = layout.port_point(A.card, A.spec, "out", w.res)
+    local bx, by = layout.port_point(B.card, B.spec, "in", w.res)
+    if not (ax and bx) then return nil end
+    local tier, mult = "pipe", 1
+    if string.sub(w.res, 1, 6) ~= "fluid/" then
+      local b
+      b, mult = links.pick_belt(kit, tier_rate(w))
+      tier = b and b.name or "none"
+    end
+    return w.res .. "|" .. ax .. "," .. ay .. ">" .. bx .. "," .. by .. "|" .. tier .. "x" .. mult
+  end
+
+  -- Keep the routes that are still valid.
+  local reused = {}
+  if prev and prev.laid then
+    local by_wire = {}
+    for _, L in ipairs(prev.laid) do by_wire[L.wire.id] = L end
+    local cand = {}
+    for _, w in ipairs(wires) do
+      local L = by_wire[w.id]
+      local k = L and wire_key(w)
+      if L and k and L.key == k then
+        local fg, tg = w.from .. "|" .. w.res, w.to .. "|" .. w.res
+        local ok = true
+        local function clear(x, y)
+          local kk = key(x, y)
+          if blocked[kk] then return false end
+          local r = reserved[kk]
+          if r and r.from_g ~= fg and r.to_g ~= tg then return false end
+          return true
+        end
+        for _, t in ipairs(L.path) do
+          if not clear(t.x, t.y) then ok = false break end
+        end
+        for _, a in ipairs(L.attach or {}) do
+          if not clear(a.sx, a.sy) then ok = false end
+        end
+        if ok then cand[w.id] = { w = w, L = L } end
+      end
+    end
+    -- A link hanging off a trunk's splitter is kept only if that trunk is.
+    local changed = true
+    while changed do
+      changed = false
+      for id, c in pairs(cand) do
+        for _, a in ipairs(c.L.attach or {}) do
+          if not cand[a.trunk] then cand[id] = nil; changed = true break end
+        end
+      end
+    end
+    -- Copy the kept routes (splitter marks are re-applied below from the kept branches).
+    for _, w in ipairs(wires) do
+      local c = cand[w.id]
+      if c then
+        local path = {}
+        for _, t in ipairs(c.L.path) do
+          path[#path + 1] = { x = t.x, y = t.y, dir = t.dir, kind = t.kind == "split" and "line" or t.kind }
+        end
+        local L = {}
+        for k2, v in pairs(c.L) do L[k2] = v end
+        L.path, L.wire = path, w
+        reused[w.id] = L
+      end
+    end
+    for _, L in pairs(reused) do
+      for _, a in ipairs(L.attach or {}) do
+        local trunk = reused[a.trunk]
+        for _, t in ipairs(trunk.path) do
+          if t.x == a.tx and t.y == a.ty then t.kind = "split" end
+        end
+        split_used[key(a.tx, a.ty)] = true
+      end
+    end
+    for _, w in ipairs(wires) do
+      local L = reused[w.id]
+      if L then
+        local fg, tg = w.from .. "|" .. w.res, w.to .. "|" .. w.res
+        for _, t in ipairs(L.path) do occ[key(t.x, t.y)] = { from_g = fg, to_g = tg, fluid = L.fluid } end
+        for _, a in ipairs(L.attach or {}) do occ[key(a.sx, a.sy)] = { from_g = fg, to_g = tg, fluid = false } end
+        if not L.fluid then
+          from_laid[fg] = from_laid[fg] or {}
+          table.insert(from_laid[fg], L)
+          to_laid[tg] = to_laid[tg] or {}
+          table.insert(to_laid[tg], L)
+        end
+      end
+    end
+  end
+
   --- Straight stretches of laid trunks where a splitter fits: the trunk tile T
   --- (fed straight from behind, leaving straight ahead) and a free tile S beside it.
   local function splitter_slots(entries, passable, want)
@@ -124,6 +236,11 @@ function links.lay(plan, spec_of, flows, kit)
   end
 
   for _, w in ipairs(wires) do
+    if reused[w.id] then
+      reused[w.id].rate = tier_rate(w)
+      laid[#laid + 1] = reused[w.id]
+      goto continue
+    end
     local A, B = geo[w.from], geo[w.to]
     local ax, ay, bx, by
     if A then ax, ay = layout.port_point(A.card, A.spec, "out", w.res) end
@@ -134,9 +251,7 @@ function links.lay(plan, spec_of, flows, kit)
       local from_g, to_g = w.from .. "|" .. w.res, w.to .. "|" .. w.res
       local branching = not fluid and from_laid[from_g] ~= nil
       local merging = not fluid and to_laid[to_g] ~= nil
-      -- The first link out of an output (or into an input) is the trunk: sized for all of it.
-      local rate = flows[w.id] or 0
-      if not branching and not merging then rate = math.max(from_sum[from_g] or 0, to_sum[to_g] or 0) end
+      local rate = tier_rate(w)
       local entry, mult
       if fluid then
         entry, mult = kit.pipe, 1
@@ -205,9 +320,10 @@ function links.lay(plan, spec_of, flows, kit)
       })
       if not path then failed[#failed + 1] = w; goto continue end
 
-      local splitters = {}
+      local splitters, attach = {}, {}
       for _, m in ipairs({ smeta or false, gmeta or false }) do
         if m then
+          attach[#attach + 1] = { trunk = m.trunk.wire.id, tx = m.t.x, ty = m.t.y, sx = m.sx, sy = m.sy }
           -- The splitter takes the trunk tile's place: that belt isn't built.
           m.t.kind = "split"
           split_used[key(m.t.x, m.t.y)] = true
@@ -230,7 +346,7 @@ function links.lay(plan, spec_of, flows, kit)
       end
       local L = {
         wire = w, fluid = fluid, path = new_tiles, merged_into = merged, kind = entry, mult = mult,
-        rate = rate, splitters = splitters,
+        rate = rate, splitters = splitters, attach = attach, key = wire_key(w),
         fed = true,                              -- every link is fed at its own rate (planner splitters don't split)
         drains = smeta ~= nil or (gmeta == nil and merged == nil), -- a merge hands its items on
         start_tile = { path[1].x, path[1].y },
@@ -247,6 +363,14 @@ function links.lay(plan, spec_of, flows, kit)
     ::continue::
   end
   return laid, failed
+end
+
+--- One link's layout, so its entities are rebuilt only when it changes.
+function links.link_signature(L)
+  local parts = { L.kind.name, tostring(L.mult) }
+  for _, t in ipairs(L.path) do parts[#parts + 1] = t.x .. "," .. t.y .. t.kind .. t.dir end
+  for _, sp in ipairs(L.splitters or {}) do parts[#parts + 1] = "S" .. sp.x .. "," .. sp.y .. sp.dir .. tostring(sp.name) end
+  return table.concat(parts, ";")
 end
 
 --- A short signature of a layout, so entities are only rebuilt when it changes.

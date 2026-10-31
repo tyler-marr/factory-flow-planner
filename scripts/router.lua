@@ -74,13 +74,18 @@ function router.route(a)
   end
 
   local function inb(x, y) return x >= b[1] and x <= b[3] and y >= b[2] and y <= b[4] end
+  -- Distance to the box round all goals: never more than to the nearest goal
+  -- (so the search stays shortest-path), and constant time however many
+  -- splitter slots there are to choose from.
+  local gx1, gy1, gx2, gy2 = math.huge, math.huge, -math.huge, -math.huge
+  for _, gl in ipairs(goal_list) do
+    gx1, gy1 = math.min(gx1, gl[1]), math.min(gy1, gl[2])
+    gx2, gy2 = math.max(gx2, gl[1]), math.max(gy2, gl[2])
+  end
   local function h(x, y)
-    local best = math.huge
-    for _, gl in ipairs(goal_list) do
-      local v = math.abs(x - gl[1]) + math.abs(y - gl[2])
-      if v < best then best = v end
-    end
-    return best
+    local dx = x < gx1 and gx1 - x or (x > gx2 and x - gx2 or 0)
+    local dy = y < gy1 and gy1 - y or (y > gy2 and y - gy2 or 0)
+    return dx + dy
   end
 
   -- State: tile, direction we arrived moving in, and whether we just came out

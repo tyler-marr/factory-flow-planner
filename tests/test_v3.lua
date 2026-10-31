@@ -298,9 +298,16 @@ local function count_kind(pat)
   for e in pairs(game.get_surface(board.SURFACE).entities) do if e.valid and e.name:find(pat) then n = n + 1 end end
   return n
 end
-local belts_before = count_kind("belt") + count_kind("pipe")
+local function plan_ents(pid)
+  local out = {}
+  for _, rec in pairs((storage.link_state or {})[pid] or {}) do
+    for _, e in ipairs(rec.ents) do if e.valid then out[#out + 1] = e end end
+  end
+  return out
+end
+local belts_before = #plan_ents(cplan.id)
 local loaded, frozen, nbelts, filled = 0, 0, 0, 0
-for e in pairs(game.get_surface(board.SURFACE).entities) do
+for _, e in ipairs(plan_ents(cplan.id)) do
   if e.valid and e.name:find("belt") then
     nbelts = nbelts + 1
     if #e.items > 0 then loaded = loaded + 1 end
@@ -311,20 +318,22 @@ end
 check(nbelts > 0 and frozen == 0, "belts run (not switched off)")
 for _ = 1, 20 do H["nth6"]({}) end
 local fed, drained = 0, 0
-for e in pairs(game.get_surface(board.SURFACE).entities) do
+for _, e in ipairs(plan_ents(cplan.id)) do
   if e.valid and e.name:find("belt") then fed = fed + e.fed; drained = drained + e.cleared end
 end
 check(fed > 0 and drained > 0, "running belts are fed at the start and emptied at the end (" .. fed .. " fed, " .. drained .. " cleared)")
 check(loaded > 0, "belts carry their link's items (" .. loaded .. " of " .. nbelts .. " belt tiles hold some)")
 check(belts_before > 0, "links are laid as belts/pipes (" .. belts_before .. " entities)")
-local sig = storage.link_sig[cplan.id]
-local nents = #storage.link_ents[cplan.id]
+local before_ents = plan_ents(cplan.id)
 board.draw(cplan)
-check(#storage.link_ents[cplan.id] == nents and storage.link_sig[cplan.id] == sig, "redrawing with nothing changed keeps the same entities")
+local after_ents = plan_ents(cplan.id)
+local same = #before_ents == #after_ents
+for i = 1, #before_ents do if before_ents[i] ~= after_ents[i] then same = false end end
+check(same, "redrawing with nothing changed keeps the same entities")
 click(P1, "toggle-links")
-check(cplan.links == "lines" and #storage.link_ents[cplan.id] == 0, "toggle to lines removes the belts")
+check(cplan.links == "lines" and #plan_ents(cplan.id) == 0, "toggle to lines removes the belts")
 click(P1, "toggle-links")
-check(cplan.links == "belts" and #storage.link_ents[cplan.id] > 0, "and back to belts")
+check(cplan.links == "belts" and #plan_ents(cplan.id) > 0, "and back to belts")
 
 -- Units: per second, then a fraction of a yellow belt.
 local udd = by_action(P1, "units")

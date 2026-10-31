@@ -146,11 +146,49 @@ local STATUS = {
   running = { "RUNNING", { 0.75, 0.85, 1 } },
 }
 
+--- A short, stable text form of a value, for fingerprints. Numbers are rounded
+--- so floating-point noise from a re-solve doesn't count as a change.
+local function fingerprint(v, out)
+  out = out or {}
+  local t = type(v)
+  if t == "number" then
+    out[#out + 1] = string.format("%.5g", v)
+  elseif t == "table" then
+    local keys = {}
+    for k in pairs(v) do keys[#keys + 1] = k end
+    table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+    out[#out + 1] = "{"
+    for _, k in ipairs(keys) do
+      out[#out + 1] = tostring(k) .. "="
+      fingerprint(v[k], out)
+      out[#out + 1] = ";"
+    end
+    out[#out + 1] = "}"
+  else
+    out[#out + 1] = tostring(v)
+  end
+  return out
+end
+
+--- The plan's drawing state: { links = { sig, ids }, cards = { [card id] = { sig, ids, hot, hot_sig } } }.
+--- nil means the plan isn't drawn (never opened, or unloaded).
+local function render_state(plan_id)
+  local R = storage.render[plan_id]
+  if R and R.cards then return R end
+  if R then destroy_ids(R) end -- a flat list from an older version
+  if storage.hot and storage.hot[plan_id] then
+    for _, e in ipairs(storage.hot[plan_id]) do if e.valid then e.destroy() end end
+    storage.hot[plan_id] = nil
+  end
+  R = { links = {}, cards = {} }
+  storage.render[plan_id] = R
+  return R
+end
+
 function board.draw(plan)
   fmt.use(plan.units, catalog.transport_kit())
-  destroy_ids(storage.render[plan.id])
-  local ids = {}
-  storage.render[plan.id] = ids
+  local R = render_state(plan.id)
+  local ids -- the list the drawing helpers below add to: the links layer or one card
   local surface = board.surface()
   local o = board.origin(plan)
   local result = storage.results[plan.id] or { cards = {}, wires = {} }
@@ -184,22 +222,40 @@ function board.draw(plan)
     keep(rendering.draw_circle({ surface = surface, color = color, radius = 0.16, filled = true, target = P(x, y) }))
   end
 
-  -- Links as belts and pipes (the default), or as drawn lines.
+  -- Links as belts and pipes (the default), or as drawn lines. Routes are
+  -- cached: only links whose ends, belt tier or surroundings changed are re-routed.
   local as_lines = {}
   local laid, failed = {}, plan.wires
+  storage.route_cache = storage.route_cache or {}
   if plan.links ~= "lines" then
-    laid, failed = links.lay(plan, function(c) return specs[c.id] end, result.wires or {}, catalog.transport_kit())
+    laid, failed = links.lay(plan, function(c) return specs[c.id] end, result.wires or {},
+      catalog.transport_kit(), storage.route_cache[plan.id])
+    storage.route_cache[plan.id] = { laid = laid }
+  else
+    storage.route_cache[plan.id] = nil
+  end
+  for _, w in ipairs(failed) do as_lines[w.id] = true end
+  board.place_links(plan, laid)
+
+  -- The links layer (×N labels, and lines for links drawn as lines) is redrawn
+  -- only when the routes or the cards' places change.
+  local pos = {}
+  for _, c in ipairs(plan.cards) do pos[#pos + 1] = c.id .. "@" .. c.x .. "," .. c.y end
+  local links_sig = links.signature(laid, failed) .. "|" .. table.concat(pos, ";") .. "|" .. tostring(plan.links)
+  local redraw_links = R.links.sig ~= links_sig
+  if redraw_links then
+    destroy_ids(R.links.ids)
+    R.links = { sig = links_sig, ids = {} }
+    ids = R.links.ids
     for _, L in ipairs(laid) do
       if L.mult > 1 then
         text("×" .. L.mult, L.start_tile[1] + 0.5, L.start_tile[2] - 0.45, COLORS.limit, 0.9, "center", "default-bold")
       end
     end
   end
-  for _, w in ipairs(failed) do as_lines[w.id] = true end
-  board.place_links(plan, laid, failed)
 
   -- Wires drawn as lines (all of them in line mode, or ones no belt could reach).
-  for _, w in ipairs(plan.wires) do
+  for _, w in ipairs(redraw_links and plan.wires or {}) do
     if not as_lines[w.id] then goto next_wire end
     local a, b = plan_lib.card(plan, w.from), plan_lib.card(plan, w.to)
     local sa, sb = a and specs[a.id], b and specs[b.id]
@@ -280,9 +336,23 @@ function board.draw(plan)
     end
   end
 
+  local present = {}
   for _, c in ipairs(plan.cards) do
     local spec = specs[c.id]
     local cr = result.cards[c.id]
+    present[c.id] = true
+    -- Redraw a card only when something it shows has changed.
+    local sig = table.concat(fingerprint({ c, cr, spec and {
+      spec.machine, spec.module_slots, spec.beacons_ok, spec.speed_bonus, spec.productivity, spec.chips,
+      #spec.inputs, #spec.outputs } or false, plan.units or "min" }))
+    local rec = R.cards[c.id]
+    if rec and rec.sig == sig then goto next_card end
+    rec = rec or {}
+    destroy_ids(rec.ids)
+    rec.sig, rec.ids = sig, {}
+    R.cards[c.id] = rec
+    ids = rec.ids
+    if spec then board.card_hotspots(plan, c, spec, rec) end
     if spec and spec.panel then
       -- A panel: things entering the plan (supply) or leaving it (output).
       local g = layout.geometry(c, spec)
@@ -429,9 +499,16 @@ function board.draw(plan)
       rect(c.x, c.y, c.x + layout.CARD_W, c.y + 2, COLORS.short_edge, false, 2)
       text("Missing recipe: " .. tostring(c.recipe), c.x + 0.4, c.y + 1, COLORS.short, 1)
     end
+    ::next_card::
   end
-
-  board.place_hotspots(plan, specs)
+  -- Cards that were deleted.
+  for id, rec in pairs(R.cards) do
+    if not present[id] then
+      destroy_ids(rec.ids)
+      board.destroy_ents(rec.hot)
+      R.cards[id] = nil
+    end
+  end
 end
 
 -- ---------------------------------------------------------------------------
@@ -453,13 +530,18 @@ local function ensure_chunks(surface, o, x1, y1, x2, y2)
   if need then surface.force_generate_chunk_requests() end
 end
 
-function board.destroy_links(plan_id)
-  if storage.link_runs then storage.link_runs[plan_id] = nil end
-  for _, e in ipairs((storage.link_ents or {})[plan_id] or {}) do
+-- Each link's entities are kept per link (storage.link_state[plan][wire id] =
+-- { sig, ents, run }), so a change rebuilds only the links it touched.
+
+local function destroy_ents(list)
+  for _, e in ipairs(list or {}) do
     if e.valid then e.destroy() end
   end
-  if storage.link_ents then storage.link_ents[plan_id] = nil end
-  if storage.link_sig then storage.link_sig[plan_id] = nil end
+end
+
+function board.destroy_links(plan_id)
+  for _, rec in pairs((storage.link_state or {})[plan_id] or {}) do destroy_ents(rec.ents) end
+  if storage.link_state then storage.link_state[plan_id] = nil end
 end
 
 -- Items ride each link's belts, spaced by how full the belt runs: a belt at
@@ -468,14 +550,14 @@ end
 -- feeding items in at the start and taking them off at the end.
 local FULL_SPACING, MAX_SPACING = 0.25, 2.0
 
-local function belt_spacing(L, flows)
+local function belt_spacing(L)
   local cap = (L.kind.items_per_s or 0) * L.mult
-  local f = cap > 0 and (L.rate or flows[L.wire.id] or 0) / cap or 0
+  local f = cap > 0 and (L.rate or 0) / cap or 0
   if f <= 0 then return MAX_SPACING end
   return math.max(FULL_SPACING, math.min(MAX_SPACING, FULL_SPACING / f))
 end
 
-local function load_link(L, ents, flows)
+local function load_link(L, ents)
   local kind, name = string.match(L.wire.res, "^([^/]+)/(.+)$")
   if L.fluid then
     for _, e in ipairs(ents) do
@@ -484,7 +566,7 @@ local function load_link(L, ents, flows)
     return
   end
   if kind ~= "item" or not prototypes.item[name] then return end
-  local spacing = belt_spacing(L, flows)
+  local spacing = belt_spacing(L)
   local carry = { 0, spacing / 2 } -- stagger the two lanes
   for _, e in ipairs(ents) do
     for lane = 1, 2 do
@@ -502,9 +584,9 @@ local function load_link(L, ents, flows)
   end
 end
 
---- Keeps every link's belt moving: feed items in at the first tile at the
---- link's spacing, take them off the last tile (the card "uses" them).
---- Called every RUN_EVERY ticks.
+--- Keeps every awake plan's belts moving: feed items in at the first tile at
+--- the link's spacing, take them off the last tile (the card "uses" them).
+--- Called every RUN_EVERY ticks. Plans nobody is viewing are asleep: skipped.
 board.RUN_EVERY = 6
 
 local function feed(line, name)
@@ -512,67 +594,59 @@ local function feed(line, name)
 end
 
 function board.run_belts()
-  for _, runs in pairs(storage.link_runs or {}) do
-    for _, r in ipairs(runs) do
-      if r.first.valid and r.last.valid then
-        r.acc = r.acc + r.speed * board.RUN_EVERY
-        local n = 0
-        while r.feed ~= false and r.acc >= r.spacing and n < 8 do
-          r.acc = r.acc - r.spacing
-          n = n + 1
-          r.lane = 3 - r.lane -- alternate lanes, so both fill evenly
-          feed(r.first.get_transport_line(r.lane), r.item)
-        end
-        if r.drain then
-          for lane = 1, 2 do r.last.get_transport_line(lane).clear() end
+  local sleeping = storage.sleeping or {}
+  for pid, state in pairs(storage.link_state or {}) do
+    if not sleeping[pid] then
+      for _, rec in pairs(state) do
+        local r = rec.run
+        if r and r.first.valid and r.last.valid then
+          r.acc = r.acc + r.speed * board.RUN_EVERY
+          local n = 0
+          while r.feed and r.acc >= r.spacing and n < 8 do
+            r.acc = r.acc - r.spacing
+            n = n + 1
+            r.lane = 3 - r.lane -- alternate lanes, so both fill evenly
+            feed(r.first.get_transport_line(r.lane), r.item)
+          end
+          if r.drain then
+            for lane = 1, 2 do r.last.get_transport_line(lane).clear() end
+          end
         end
       end
     end
   end
 end
 
-function board.place_links(plan, laid, failed)
-  storage.link_ents = storage.link_ents or {}
-  storage.link_sig = storage.link_sig or {}
-  storage.link_runs = storage.link_runs or {}
-  local flows = (storage.results[plan.id] or {}).wires or {}
-  local sig = links.signature(laid, failed)
-  for _, L in ipairs(laid) do
-    if not L.fluid then sig = sig .. "|d" .. L.wire.id .. "=" .. string.format("%.2f", belt_spacing(L, flows)) end
-  end
-  if storage.link_sig[plan.id] == sig and storage.link_ents[plan.id] then return end
-  board.destroy_links(plan.id)
-  local list, runs = {}, {}
-  storage.link_ents[plan.id] = list
-  storage.link_sig[plan.id] = sig
-  storage.link_runs[plan.id] = runs
-  if #laid == 0 then return end
-  local surface = board.surface()
-  local o = board.origin(plan)
-  local x1, y1, x2, y2 = math.huge, math.huge, -math.huge, -math.huge
-  for _, L in ipairs(laid) do
-    for _, t in ipairs(L.path) do
-      x1, y1, x2, y2 = math.min(x1, t.x), math.min(y1, t.y), math.max(x2, t.x), math.max(y2, t.y)
+--- Belts are switched off while a plan sleeps (nobody viewing it) so they cost nothing.
+function board.set_sleeping(plan_id, asleep)
+  storage.sleeping = storage.sleeping or {}
+  if (storage.sleeping[plan_id] or false) == asleep then return end
+  storage.sleeping[plan_id] = asleep or nil
+  for _, rec in pairs((storage.link_state or {})[plan_id] or {}) do
+    for _, e in ipairs(rec.ents) do
+      if e.valid and e.type ~= "pipe" and e.type ~= "pipe-to-ground" then e.disabled_by_script = asleep end
     end
   end
-  if x1 == math.huge then return end
-  ensure_chunks(surface, o, x1, y1, x2, y2)
-  for _, L in ipairs(laid) do
-    local link_ents = {}
-    for _, sp in ipairs(L.splitters or {}) do
-      if sp.name then
-        local e = surface.create_entity({ name = sp.name, force = "neutral", create_build_effect_smoke = false,
-          position = { x = o.x + sp.x, y = o.y + sp.y }, direction = DIR[sp.dir] })
-        if e then
-          -- Trunk items stay on the trunk; the branch belt is fed at its own rate.
-          pcall(function() e.splitter_output_priority = sp.trunk_side end)
-          e.destructible, e.minable_flag, e.rotatable, e.operable = false, false, false, false
-          list[#list + 1] = e
-        end
+end
+
+local function build_link(surface, o, L, asleep)
+  local ents = {}
+  for _, sp in ipairs(L.splitters or {}) do
+    if sp.name then
+      local e = surface.create_entity({ name = sp.name, force = "neutral", create_build_effect_smoke = false,
+        position = { x = o.x + sp.x, y = o.y + sp.y }, direction = DIR[sp.dir] })
+      if e then
+        -- Trunk items stay on the trunk; the branch belt is fed at its own rate.
+        pcall(function() e.splitter_output_priority = sp.trunk_side end)
+        e.destructible, e.minable_flag, e.rotatable, e.operable = false, false, false, false
+        if asleep then e.disabled_by_script = true end
+        ents[#ents + 1] = e
       end
     end
-    for _, t in ipairs(L.path) do
-      if t.kind == "split" then goto next_tile end
+  end
+  local tiles = {}
+  for _, t in ipairs(L.path) do
+    if t.kind ~= "split" then
       local params = { force = "neutral", create_build_effect_smoke = false,
         position = { x = o.x + t.x + 0.5, y = o.y + t.y + 0.5 } }
       if L.fluid then
@@ -595,79 +669,105 @@ function board.place_links(plan, laid, failed)
       end
       local e = surface.create_entity(params)
       if e then
-        e.destructible = false
-        e.minable_flag = false
-        e.rotatable = false
-        e.operable = false
-        list[#list + 1] = e
-        link_ents[#link_ents + 1] = e
+        e.destructible, e.minable_flag, e.rotatable, e.operable = false, false, false, false
+        if asleep and not L.fluid then e.disabled_by_script = true end
+        ents[#ents + 1] = e
+        tiles[#tiles + 1] = e
       end
-      ::next_tile::
     end
-    load_link(L, link_ents, flows)
-    local item = string.match(L.wire.res, "^item/(.+)$")
-    if not L.fluid and item and prototypes.item[item] and #link_ents > 0 then
-      local spacing = belt_spacing(L, flows)
-      runs[#runs + 1] = {
-        first = link_ents[1], last = link_ents[#link_ents], item = item,
-        speed = (L.kind.items_per_s or 15) / 480, -- tiles per tick
-        -- Two lanes, alternated: each lane gets an item every `spacing` tiles.
-        spacing = spacing / 2, acc = 0, lane = 1,
-        -- Every link is fed at its own rate; a merge hands its items on.
-        feed = L.fed ~= false,
-        drain = L.drains ~= false,
-      }
+  end
+  load_link(L, tiles)
+  local run
+  local item = string.match(L.wire.res, "^item/(.+)$")
+  if not L.fluid and item and prototypes.item[item] and #tiles > 0 then
+    run = {
+      first = tiles[1], last = tiles[#tiles], item = item,
+      speed = (L.kind.items_per_s or 15) / 480, -- tiles per tick
+      -- Two lanes, alternated: each lane gets an item every `spacing` tiles.
+      spacing = belt_spacing(L) / 2, acc = 0, lane = 1,
+      -- Every link is fed at its own rate; a merge hands its items on.
+      feed = L.fed ~= false,
+      drain = L.drains ~= false,
+    }
+  end
+  return ents, run
+end
+
+--- Brings the plan's belt and pipe entities in line with its laid-out links,
+--- rebuilding only links whose layout changed. A rate change on its own only
+--- updates how fast items are fed in.
+function board.place_links(plan, laid)
+  storage.link_state = storage.link_state or {}
+  local state = storage.link_state[plan.id] or {}
+  storage.link_state[plan.id] = state
+  local surface = board.surface()
+  local o = board.origin(plan)
+  local asleep = (storage.sleeping or {})[plan.id] == true
+  local keep = {}
+  local todo = {}
+  for _, L in ipairs(laid) do
+    local wid = L.wire.id
+    keep[wid] = true
+    local sig = links.link_signature(L)
+    local rec = state[wid]
+    if rec and rec.sig == sig then
+      if rec.run then rec.run.spacing = belt_spacing(L) / 2 end
+    else
+      if rec then destroy_ents(rec.ents) end
+      todo[#todo + 1] = { L = L, sig = sig }
     end
+  end
+  for wid, rec in pairs(state) do
+    if not keep[wid] then
+      destroy_ents(rec.ents)
+      state[wid] = nil
+    end
+  end
+  if #todo == 0 then return end
+  local x1, y1, x2, y2 = math.huge, math.huge, -math.huge, -math.huge
+  for _, job in ipairs(todo) do
+    for _, t in ipairs(job.L.path) do
+      x1, y1, x2, y2 = math.min(x1, t.x), math.min(y1, t.y), math.max(x2, t.x), math.max(y2, t.y)
+    end
+  end
+  if x1 ~= math.huge then ensure_chunks(surface, o, x1 - 2, y1 - 2, x2 + 2, y2 + 2) end
+  for _, job in ipairs(todo) do
+    local ents, run = build_link(surface, o, job.L, asleep)
+    state[job.L.wire.id] = { sig = job.sig, ents = ents, run = run }
   end
 end
 
 -- ---------------------------------------------------------------------------
 -- Hover hotspots: invisible entities over each control, so the game tells us
 -- what is under the cursor (on_selected_entity_changed) and draws its
--- selection brackets there.
+-- selection brackets there. Kept per card and rebuilt when the card moves.
 
-function board.place_hotspots(plan, specs)
-  storage.hot = storage.hot or {}
-  for _, e in ipairs(storage.hot[plan.id] or {}) do
-    if e.valid then e.destroy() end
-  end
-  local list = {}
-  storage.hot[plan.id] = list
+function board.card_hotspots(plan, card, spec, rec)
+  local g = layout.geometry(card, spec)
+  local sig = card.x .. "," .. card.y .. "," .. #g.parts .. tostring(spec.chips)
+  if rec.hot_sig == sig and rec.hot then return end
+  destroy_ents(rec.hot)
+  rec.hot, rec.hot_sig = {}, sig
   local surface = board.surface()
   local o = board.origin(plan)
-  for _, c in ipairs(plan.cards) do
-    local spec = specs[c.id]
-    if spec then
-      local g = layout.geometry(c, spec)
-      local cx, cy = math.floor((o.x + (g.l + g.r) / 2) / 32), math.floor((o.y + (g.t + g.b) / 2) / 32)
-      if not surface.is_chunk_generated({ cx, cy }) then
-        surface.request_to_generate_chunks({ x = o.x + g.l, y = o.y + g.t }, 1)
-        surface.force_generate_chunk_requests()
-      end
-      for _, p in ipairs(g.parts) do
-        local hot = layout.HOTSPOTS[p.hot]
-        if hot then
-          local e = surface.create_entity({
-            name = hot.name, force = "neutral", create_build_effect_smoke = false,
-            position = { x = o.x + (p.x1 + p.x2) / 2, y = o.y + (p.y1 + p.y2) / 2 },
-          })
-          if e then
-            e.destructible = false
-            e.minable_flag = false
-            list[#list + 1] = e
-          end
-        end
+  ensure_chunks(surface, o, g.l, g.t, g.r, g.b)
+  for _, p in ipairs(g.parts) do
+    local hot = layout.HOTSPOTS[p.hot]
+    if hot then
+      local e = surface.create_entity({
+        name = hot.name, force = "neutral", create_build_effect_smoke = false,
+        position = { x = o.x + (p.x1 + p.x2) / 2, y = o.y + (p.y1 + p.y2) / 2 },
+      })
+      if e then
+        e.destructible = false
+        e.minable_flag = false
+        rec.hot[#rec.hot + 1] = e
       end
     end
   end
 end
 
-function board.destroy_hotspots(plan_id)
-  for _, e in ipairs((storage.hot or {})[plan_id] or {}) do
-    if e.valid then e.destroy() end
-  end
-  if storage.hot then storage.hot[plan_id] = nil end
-end
+board.destroy_ents = destroy_ents
 
 --- The hover popup: a frame round the part under the cursor and a short
 --- list of what the wheel and clicks do there. Only that player sees it.
@@ -774,12 +874,28 @@ function board.resolve(plan)
   return result
 end
 
-function board.destroy_plan_drawing(plan_id)
-  board.destroy_hotspots(plan_id)
+--- Removes everything a plan has on the board (drawings, hotspots, belts).
+--- Its data, solve result and cached routes stay, so it redraws quickly.
+function board.unload(plan_id)
   board.destroy_links(plan_id)
-  destroy_ids(storage.render[plan_id])
+  local R = storage.render[plan_id]
+  if R and R.cards then
+    destroy_ids(R.links and R.links.ids)
+    for _, rec in pairs(R.cards) do
+      destroy_ids(rec.ids)
+      destroy_ents(rec.hot)
+    end
+  elseif R then
+    destroy_ids(R)
+  end
   storage.render[plan_id] = nil
+  if storage.sleeping then storage.sleeping[plan_id] = nil end
+end
+
+function board.destroy_plan_drawing(plan_id)
+  board.unload(plan_id)
   storage.results[plan_id] = nil
+  if storage.route_cache then storage.route_cache[plan_id] = nil end
 end
 
 -- ---------------------------------------------------------------------------

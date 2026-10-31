@@ -1,4 +1,12 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.12.0
+Date: 2026-11-01
+  Optimizations:
+    - Belt routes are kept between edits. Only links whose ends moved, or whose belt tier changed, are routed and built again. Editing a large plan is about 20 times faster.
+    - Faster belt routing for links that merge into a busy input.
+    - Only cards whose numbers or settings changed are redrawn.
+    - Belts of plans nobody is looking at are paused. Only the 3 most recently viewed plans per team stay on the board; older ones are cleared and drawn again when opened.
+---------------------------------------------------------------------------------------------------
 Version: 0.11.1
 Date: 2026-11-01
   Changes:
