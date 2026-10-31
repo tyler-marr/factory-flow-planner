@@ -1,0 +1,8 @@
+# Release zips (build with tools/package.sh)
+*.zip
+dist/
+# Vanilla game data the tests read (fetched by tests/fetch_factorio_data.sh)
+tests/.factorio-data/
+__pycache__/
+*.pyc
+.DS_Store

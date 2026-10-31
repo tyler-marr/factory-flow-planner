@@ -1,0 +1,30 @@
+name: Release
+
+# Push a tag like v0.11.0 (matching info.json's version) to build the zip and
+# attach it to a GitHub release. Upload that zip to mods.factorio.com.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install lupa luaparser
+      - run: ./tests/fetch_factorio_data.sh
+      - run: python3 tests/run_all.py
+      - name: Check the tag matches info.json
+        run: |
+          v=$(python3 -c "import json;print(json.load(open('info.json'))['version'])")
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "Tag ${GITHUB_REF_NAME} doesn't match info.json version $v"; exit 1; }
+      - run: python3 tools/package.py
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip

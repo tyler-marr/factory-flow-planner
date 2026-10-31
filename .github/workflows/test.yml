@@ -1,0 +1,28 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Lua runtime and tools
+        run: pip install lupa luaparser
+      - name: Fetch vanilla game data
+        run: ./tests/fetch_factorio_data.sh
+      - name: Run tests
+        run: python3 tests/run_all.py
+      - name: Check for undefined names
+        run: python3 tests/globals.py
+      - name: Build the mod zip
+        run: python3 tools/package.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mod-zip
+          path: dist/*.zip

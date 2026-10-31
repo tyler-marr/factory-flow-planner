@@ -1,0 +1,139 @@
+---------------------------------------------------------------------------------------------------
+Version: 0.11.0
+Date: 2026-11-01
+  Changes:
+    - Renamed to Factory Flow Planner (factory-flow-planner) for its first public release. MIT licensed.
+---------------------------------------------------------------------------------------------------
+Version: 0.10.0
+Date: 2026-10-31
+  Features:
+    - Splits and merges use splitters: a second link out of an output leaves the trunk through a splitter; a second link into an input joins through one.
+    - Planner splitters: copies of every splitter in the game (vanilla, Space Age, modded) used only on the board. They don't split 50/50: the trunk keeps its items and each branch belt runs at its own planned rate.
+    - The trunk belt is sized for everything that runs along it.
+  Changes:
+    - With no room for a splitter, links fall back to sharing the trunk or sideloading as before. Pipes join without splitters.
+---------------------------------------------------------------------------------------------------
+Version: 0.9.2
+Date: 2026-10-31
+  Changes:
+    - Belts run: items move along each link at the belt's real speed, fed in at the start at the link's rate and taken off at the end.
+    - Belts and pipes are rebuilt after a mod update.
+---------------------------------------------------------------------------------------------------
+Version: 0.9.1
+Date: 2026-10-31
+  Features:
+    - Belts carry their link's items, spaced by how full the belt runs; pipes hold their fluid. The belts are switched off so the items stay in place.
+  Bugfixes:
+    - The outline shown while dragging a card was half a tile off; it now sits exactly where the card will land.
+    - The game's own drag rectangle (which snaps to whole tiles) is no longer drawn.
+    - The shortcut bar stayed visible for players already on the board when the mod updated.
+---------------------------------------------------------------------------------------------------
+Version: 0.9.0
+Date: 2026-10-31
+  Features:
+    - "Show rates as" at the top of the side panel: items per second, minute or hour, or fractions of any belt in the game. It applies to the board and the panel for everyone on the plan, and is saved with the plan.
+    - Wheel steps and typed rates follow the chosen time unit.
+  Changes:
+    - No icon follows the cursor on the board, and the pointer is the normal arrow.
+    - The shortcut bar is hidden on the board along with the rest of the HUD; it comes back when you leave.
+---------------------------------------------------------------------------------------------------
+Version: 0.8.1
+Date: 2026-10-31
+  Changes:
+    - The side panel runs the full height of the screen, pinned to the left edge. Only its list scrolls; the buttons stay at the top.
+    - It resizes with the screen resolution and UI scale.
+---------------------------------------------------------------------------------------------------
+Version: 0.8.0
+Date: 2026-10-31
+  Changes:
+    - The top toolbar is gone. Its controls are a row of icon buttons at the top of the side panel: add recipe, supply panel, output panel, belts or lines, plans, export, and back to the game.
+    - The long hint line is gone too (hovering a card explains each part). A short message shows at the top of the side panel only when there's something to say: wiring, moving, or no target yet.
+---------------------------------------------------------------------------------------------------
+Version: 0.7.1
+Date: 2026-10-31
+  Bugfixes:
+    - The overview stretched to the toolbar's width and scrolled sideways. It is now a fixed narrow column.
+---------------------------------------------------------------------------------------------------
+Version: 0.7.0
+Date: 2026-10-31
+  Features:
+    - An overview down the left side, as in the GTNH planner: total power and machines to build, then Inputs, Outputs, Short, Internal and Machines.
+    - Machines are grouped by type with how many to build and their power; each card using them is listed with its count. Click one to go to it.
+    - Section headers fold and unfold.
+  Changes:
+    - The toolbar keeps only the buttons and the hint; the summary moved to the overview.
+---------------------------------------------------------------------------------------------------
+Version: 0.6.0
+Date: 2026-10-31
+  Changes:
+    - Cards and panels look like Factorio windows: beveled frame, title bar in the heading colour with a drag handle, and an inset body.
+    - Inputs and outputs are inventory-style slots: red when short, green for the target, yellow with spare.
+    - The machine sits in a large slot with a big count, "build N" (whole machines to place), and an orange bar against its limit.
+    - Module and beacon slots are drawn as slots, one per module slot.
+    - The status line uses the game's status dots and wording: Working, Missing ingredients, Limited, Idle. The right side says how many of which machine to build.
+---------------------------------------------------------------------------------------------------
+Version: 0.5.2
+Date: 2026-10-31
+  Changes:
+    - Belts and pipes now run in under the card edges, so there is no gap between a link and its port.
+    - Cards are drawn above entities; their icons are drawn as rich text so they stay on top.
+---------------------------------------------------------------------------------------------------
+Version: 0.5.1
+Date: 2026-10-31
+  Bugfixes:
+    - Fixed a crash loading a save where someone was on the board: the toolbar kept from the older version had no Links button.
+  Changes:
+    - After a mod update, Factory Flow's windows are rebuilt and existing cards move onto the tile grid so belts line up.
+---------------------------------------------------------------------------------------------------
+Version: 0.5.0
+Date: 2026-10-31
+  Features:
+    - Links are real belts (items) and pipes (fluids) on the board, routed round cards and each other.
+    - Each belt is the slowest tier that carries its rate, read from the game (modded belts too). Too much for the fastest belt shows "×N".
+    - Links cross each other or pass under cards with undergrounds and pipe-to-ground, within each one's real reach.
+    - Links from one output share a trunk; links into one input merge onto one belt.
+    - "Links: belts / lines" toolbar button switches back to drawn lines.
+  Changes:
+    - Cards snap to whole tiles and their ports are two tiles apart, so belts and pipes line up and neighbouring pipes never join.
+---------------------------------------------------------------------------------------------------
+Version: 0.4.0
+Date: 2026-10-30
+  Features:
+    - Cards redrawn after the GTNH planner: inputs as tiles on the left, the machine in the middle (icon, count, rule, power, module and beacon chips), outputs as tiles on the right, and a status bar along the bottom (RUNNING, SHORT of X, AT LIMIT, IDLE, TARGET).
+    - Hovering any part of a card frames it and shows a popup of what the wheel and clicks do there, with its current value. The toolbar hint says the same.
+    - Wires end in an arrow and turn just before the card they feed.
+  Changes:
+    - Rates are on the tiles; wires no longer carry rate labels.
+    - Panels are wider and show their rule under each item.
+---------------------------------------------------------------------------------------------------
+Version: 0.3.0
+Date: 2026-10-30
+  Features:
+    - Supply panels (things coming in from outside, outputs on the right) and output panels (things leaving, inputs on the left). Each item can be Any, Up to or Exactly a rate.
+    - Add panels from the toolbar, from the first choice in the recipe picker, or by dragging a port onto a panel.
+    - Scroll over a card part to step it, as in the GTNH planner: machine count (Any, Up to, Exactly), machine, modules, beacons, and output rates. Ctrl and Shift give bigger steps. Scrolling anywhere else zooms.
+    - Click a card part to step it up, right-click to step it down. Clicking the machine count cycles Any, Up to, Exactly.
+    - Modules and beacons on every card, read from the game (modded ones work), with Space Age's beacon falloff.
+    - Machine limits: "Up to N machines" caps a card, and whatever it can't make shows as short downstream.
+---------------------------------------------------------------------------------------------------
+Version: 0.2.0
+Date: 2026-10-30
+  Features:
+    - Drag and drop on the board: drag a card's title to move it, drag between an output and an input to wire them.
+    - Drag an output onto empty space to add a recipe that uses it; drag an input onto empty space to add one that makes it.
+    - A ghost card or wire follows the cursor while dragging.
+    - Card titles show the recipe icon and "count x machine icon + name"; port icons are now clearly visible.
+    - The board has a plain floor and hides the quickbar, minimap, research and hint boxes while you are on it.
+  Bugfixes:
+    - Icons were drawn underneath card backgrounds and almost invisible.
+    - A wired card with no target could consume another card's target output.
+  Changes:
+    - Requires Factorio 2.1.22 or newer (drag events).
+---------------------------------------------------------------------------------------------------
+Version: 0.1.0
+Date: 2026-10-30
+  Features:
+    - First proof of concept: a flowchart board with recipe cards, wires, targets and an LP solver.
+    - Recipes, machines, items, fluids and icons are read from the running game, so modded content works.
+    - Plans are shared by everyone on a force, and several players can edit one plan at once.
+    - Import and export plans as strings.
