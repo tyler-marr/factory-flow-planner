@@ -1,4 +1,9 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.11.1
+Date: 2026-11-01
+  Changes:
+    - Right-clicking an output with a target rate, or a panel item with an Up to or Exactly rate, clears that rate. Right-click again (or on a port with none) to unlink it.
+---------------------------------------------------------------------------------------------------
 Version: 0.11.0
 Date: 2026-11-01
   Changes:

@@ -20,7 +20,7 @@ until you come back.
 - **Click an input** to pick a recipe that makes it. The new card is placed and linked.
 - **Drag from an output to an input** to link them, or onto empty space to add a recipe that uses it.
 - **Drag a card's title** to move it.
-- **Right-click a port** to unlink it.
+- **Right-click a port** to clear its target or rate restriction; right-click again (or with none set) to unlink it.
 
 **Hover over any part of a card** to see what scrolling and clicking do there.
 
@@ -30,8 +30,8 @@ until you come back.
 | Machine | Next / previous machine | Next / previous |
 | Modules | Next / previous module, in every slot | Next / previous |
 | Beacons | ±1 beacon (Ctrl ±4). Shift: change the beacon module | One more / fewer |
-| An output's rate | Set a target: ±1, Ctrl ±10, Shift ±100 in the shown unit | Start a link |
-| A supply / output panel item | Cap it (Up to) / ask for Exactly | |
+| An output's rate | Set a target: ±1, Ctrl ±10, Shift ±100 in the shown unit | Start a link / clear its target (unlink if none) |
+| A supply / output panel item | Cap it (Up to) / ask for Exactly | / clear the rate (unlink if none) |
 
 **Supply** and **output** panels hold things entering or leaving the plan. Each item can be Any,
 Up to or Exactly a rate.

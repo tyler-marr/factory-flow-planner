@@ -203,6 +203,29 @@ board.resolve(plan)
 -- With only the panel asking, the card follows it (up to its supply cap).
 check(res().status ~= "no_target", "an Exactly output panel counts as a target")
 
+-- Right-click clears a port's restriction first, and only then unlinks.
+local function wires_on(card_id, res)
+  local n = 0
+  for _, w in ipairs(plan.wires) do if (w.from == card_id or w.to == card_id) and w.res == res then n = n + 1 end end
+  return n
+end
+local out_res = "item/chemical-science-pack"
+C.target = { kind = "rate", product = "item/electronic-circuit", value = 1 }
+local cw = wires_on(C.id, "item/electronic-circuit")
+right_click(P1, part_at(C, "out", "item/electronic-circuit"))
+check(C.target == nil and wires_on(C.id, "item/electronic-circuit") == cw, "right-click on a targeted output clears the target and keeps its link")
+right_click(P1, part_at(C, "out", "item/electronic-circuit"))
+check(wires_on(C.id, "item/electronic-circuit") == 0, "a second right-click unlinks it")
+Out.items[1] = Out.items[1] or { res = "item/electronic-circuit" }
+plan_lib.add_wire(plan, C.id, Out.id, Out.items[1].res)
+Out.items[1].rule, Out.items[1].value = "exact", 1
+local ow = wires_on(Out.id, Out.items[1].res)
+right_click(P1, part_at(Out, "in", Out.items[1].res))
+check(Out.items[1].rule == nil and wires_on(Out.id, Out.items[1].res) == ow, "right-click on a panel item with a rate clears the rate and keeps its link")
+right_click(P1, part_at(Out, "in", Out.items[1].res))
+check(wires_on(Out.id, Out.items[1].res) == 0, "and a second right-click unlinks it")
+Out.items[1].rule, Out.items[1].value = "upto", 0.5
+
 -- Panel inspector.
 board.session(1).selected = Out.id
 require("scripts.gui").inspector_update(P1)

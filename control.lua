@@ -146,7 +146,7 @@ end
 -- Each one steps with the wheel, a click (+1) or a right-click (-1), like the
 -- GTNH planner's card. Ctrl and Shift make the wheel's steps bigger.
 
-local is_control
+local is_control, clear_port_restriction
 
 local function card_result(plan, card)
   local r = storage.results[plan.id]
@@ -212,6 +212,26 @@ local CONTROLS = { count = true, machine = true, modules = true, beacons = true,
 function is_control(card, hit)
   if plan_lib.is_panel(card) then return hit.part == "in" or hit.part == "out" end
   return CONTROLS[hit.part] == true
+end
+
+--- Clears a rate restriction on a port: a recipe output's target rate, or a
+--- panel item's Up to / Exactly. Returns true if there was one.
+function clear_port_restriction(card, hit)
+  if plan_lib.is_panel(card) then
+    for _, it in ipairs(card.items or {}) do
+      if it.res == hit.res and it.rule then
+        it.rule, it.value = nil, nil
+        return true
+      end
+    end
+    return false
+  end
+  local t = card.target
+  if hit.part == "out" and t and t.kind == "rate" and t.product == hit.res then
+    card.target = nil
+    return true
+  end
+  return false
 end
 
 --- Steps one card control. Returns true when something changed.
@@ -440,7 +460,13 @@ local function on_board_click(event, right)
     local card, hit = board.pick(plan, event.cursor_position)
     if not (card and hit) then return end
     if hit.part == "in" or hit.part == "out" then
-      if plan_lib.remove_port_wires(plan, card.id, hit.part, hit.res) > 0 then changed(plan) end
+      -- A restriction set on this port (a target rate, or a panel item's
+      -- Up to / Exactly) is cleared first; with none, right-click unlinks.
+      if clear_port_restriction(card, hit) then
+        changed(plan)
+      elseif plan_lib.remove_port_wires(plan, card.id, hit.part, hit.res) > 0 then
+        changed(plan)
+      end
     elseif hit.part == "count" then
       card.target = nil
       changed(plan)

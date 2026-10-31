@@ -33,7 +33,7 @@ function hints.for_part(plan, card, hit, result, force)
           { "Scroll", source and ("cap it: " .. steps) or ("ask for exactly: " .. steps) },
           { "", "down to zero: any amount" },
           { "Drag", source and "onto an input to wire it" or "from an output here to wire it" },
-          { "Right-click", "unwire" },
+          { "Right-click", (it and it.rule) and "clear the rate (any amount)" or "unwire" },
         },
       }
     end
@@ -105,7 +105,7 @@ function hints.for_part(plan, card, hit, result, force)
         { "Scroll", "set a target: " .. steps },
         { "Click / Drag", "wire it to an input" },
         { "Drag to space", "add a recipe that uses it" },
-        { "Right-click", "unwire" },
+        { "Right-click", is_target and "clear the target" or "unwire" },
       },
     }
   elseif part == "in" then
